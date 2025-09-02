@@ -10,6 +10,11 @@ import re
 import sys
 import zlib
 
+############################################
+###### 3. Creating repositories. init ######
+############################################
+
+## 3.1. The Repository object
 argparser = argparse.ArgumentParser(description="description")
 
 argsubparsers = argparser.add_subparsers(title="Commands", dest="command")
@@ -36,6 +41,7 @@ def main(argv=sys.argv[1:]):
 		case _ : print("Bad command.")	
 
 
+# Repository class. Creates a basic repository. Saves working tree, gitdir (within working tree) and configuration
 class GitRepository (object):
 	"""A git repository"""
 
@@ -65,12 +71,13 @@ class GitRepository (object):
 				raise Exception(f"Unsupported repositoryformatversion: {vers}")
 
 
+# Creates and returns path under a given path.
 def repo_path(repo, *path):
 	"""Compute path under repo's gitdir."""
 	return os.path.join(repo.gitdir, *path)
 
 
-# Return and optionally create a path to a file
+# Returns and optionally create a path to a file
 def repo_file(repo, *path, mkdir=False):
     """Same as repo_path, but create dirname(*path) if absent.  For
 example, repo_file(r, \"refs\", \"remotes\", \"origin\", \"HEAD\") will create
@@ -80,7 +87,7 @@ example, repo_file(r, \"refs\", \"remotes\", \"origin\", \"HEAD\") will create
 		return repo_path(repo, *path)
 
 
-#Return and optionally create a path to a directory
+#Returns and optionally create a path to a directory.
 def repo_dir(repo, *path, mkdir=False):
 	"""Same as repo_path, but mkdir *path if absent if mkdir."""
 
@@ -98,9 +105,24 @@ def repo_dir(repo, *path, mkdir=False):
 	else:
 		return None
 
-def repo_create(path):
-	"""Create a new repository at path."""
 
+# Creates simple configuration file 
+def repo_default_config():
+	ret = configparser.ConfigParser()
+
+	ret.add_section("core")
+	ret.set("core", "repositoryformatversion", "0")
+	ret.set("core", "filemode", "false")
+	ret.set("core", "bare", "false")
+
+	return ret
+
+
+# Creates new repository at a path. 
+# Creates directory structure within git path. 
+# Creates files with default syntax
+# If repository already exists within the path and contains something, raise exception
+def repo_create(path):
 	repo = GitRepository(path, True)
 
 	# First, we make sure the path either doesn't exist or is an empty dir.
@@ -131,3 +153,6 @@ def repo_create(path):
 		config.write(f)
 
 	return repo
+
+
+## 3.2. The init command
