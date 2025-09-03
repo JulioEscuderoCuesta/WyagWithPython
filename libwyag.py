@@ -277,3 +277,42 @@ def object_write(obj, repo=None):
                 # Compress and write
                 f.write(zlib.compress(result))
     return sha
+
+# GitBlob class. It has no format
+class GitBlob(GitObject):
+    fmt = b'blob'
+
+    def serialize(self):
+        return self.blobdata:
+
+    def deserialize(self, data):
+        self.blobdata = data
+
+
+# cat-file command. Prints the raw contents of an object to stdout
+# Structure: wyag cat-file TYPE OBJECT
+argsp = argsubparsers.add_parser("cat-file", help="Provide content of repository objects")
+
+argsp.add_argument("type",
+                    metavar="type",
+                    choices=["blob", "commit", "tag", "tree"],
+                    help="Specify the type")
+
+argsp.add_argument("object",
+                    metavar="object",
+                    help="The object to display")
+
+# Gets current repo (current location) and calls cat_file
+def cmd_cat_file(args):
+    repo = repo_find()
+    cat_file(repo, args.object, fmt=args.type.encode())
+
+# Reads object from this repo and prints it
+def cat_file(repo, obj, fmt=None):
+    obj = object_read(repo, object_find(repo, obj, fmt=fmt))
+    sys.stdout.buffer.write(obj.serialize())
+
+# Git has a lot of ways to refer to objects: full hash, small hash, tags..
+# This function will be the name resolution function. It will be implemented later
+def object_find(repo, name, fmt=None, follow=True):
+    return name
