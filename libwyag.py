@@ -209,32 +209,38 @@ class GitObject (object):
             self.init()
 
     def serialize(self, repo):
-        throw Exception("Unimplemented")
+        raise Exception("Unimplemented")
 
     def deserialize(self, repo):
-        throw Exception("Unimplemented")
+        raise Exception("Unimplemented")
 
     def init(self):
         pass
 
-
+# Reading Wyag object
+# An object starts with a header that specifies its type: blob, commit, tag or tree (more on that in a second). 
+# This header is followed by an ASCII space (0x20), then the size of the object in bytes as an ASCII number, 
+# then null (0x00) (the null byte), then the contents of the object.
 def object_read(repo, sha):
-    path = repo_file(repo, "object", sha[0:2], sha[2:0])
+    path = repo_file(repo, "objects", sha[0:2], sha[2:])
 
     if not os.path.isfile(path):
         return None
 
     with open (path, "rb") as f:
+        # Decompresse object
         raw = zlib.decompress(f.read())
 
-        # Read object type
-        x = raw.find(b' ')
-        fmt = raw[0:x]
+        # Find first space to get object type
+        x = raw.find(b' ') # Example: x = 6 (position of space)
+        fmt = raw[0:x] # Example: raw[0:6] = b'commit'
 
-        # Read and validate object size
-        y = raw.find(b'\x00', x)
-        size = int(raw[x:y].decode("ascii"))
-        if size != len(raw)-y-1:
+        # Find null byte to get size
+        y = raw.find(b'\x00', x) # Example: y = 11 (positon of \x00)
+        size = int(raw[x:y].decode("ascii")) # Example: size = 1086
+
+        # Check size is equal
+        if size != len(raw)-y-1: # Example: content_size should be full content minus null byte plus size information
             raise Exception(f"Malformed object {sha}: bad length")
 
         # Pick constructor
@@ -246,4 +252,28 @@ def object_read(repo, sha):
             case _:
                 raise Exception(f"Unknown type {fmt.decode("ascii")} for object {sha}")
 
-        return c(raw[y+1:])
+        # Return class with content
+        return c(raw[y+1:]) # Example: c=GitCommit. return GitCommit(raw[12:end]), only the content of the object
+
+# Writing Wyag object
+def object_write(obj, repo=None):
+    # First, serialize object. It only contains the data for now
+    data = obj.serialize()
+
+    # Build header of the object.
+    # fmt = object type
+    result = obj.fmt + b' ' + str(len(data)).encode() + b'\x00' + data
+
+    # Compute hash of all the object
+    sha = hashlib.sha1(result).hexdigest()
+
+    if repo:
+        # Compute path (Creates path)
+        path = repo_file(repo, "objects", sha[0:2], sha[2:], mkdir=True)
+
+        # If path exists, compress object and write it there
+        if not os.path.exists(path):
+            with open(path, 'wb') as f:
+                # Compress and write
+                f.write(zlib.compress(result))
+    return sha
