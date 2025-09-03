@@ -361,3 +361,95 @@ def object_hash(fd, fmt, repo=None):
         case _: raise Exception(f"Unknown type {fmt}!")
 
     return object_write(obj, repo)
+
+
+
+#############################################
+###### 5. Reading commit history: log #######
+#############################################
+#
+## Example of git commit:
+#tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147
+#parent 206941306e8a8af65b66eaaaea388a7ae24d49a0
+#author Thibault Polge <thibault@thb.lt> 1527025023 +0200
+#committer Thibault Polge <thibault@thb.lt> 1527025044 +0200
+#gpgsig -----BEGIN PGP SIGNATURE-----
+#
+# iQIzBAABCAAdFiEExwXquOM8bWb4Q2zVGxM2FxoLkGQFAlsEjZQACgkQGxM2FxoL
+# kGQdcBAAqPP+ln4nGDd2gETXjvOpOxLzIMEw4A9gU6CzWzm+oB8mEIKyaH0UFIPh
+# rNUZ1j7/ZGFNeBDtT55LPdPIQw4KKlcf6kC8MPWP3qSu3xHqx12C5zyai2duFZUU
+# wqOt9iCFCscFQYqKs3xsHI+ncQb+PGjVZA8+jPw7nrPIkeSXQV2aZb1E68wa2YIL
+# 3eYgTUKz34cB6tAq9YwHnZpyPx8UJCZGkshpJmgtZ3mCbtQaO17LoihnqPn4UOMr
+# V75R/7FjSuPLS8NaZF4wfi52btXMSxO/u7GuoJkzJscP3p4qtwe6Rl9dc1XC8P7k
+# NIbGZ5Yg5cEPcfmhgXFOhQZkD0yxcJqBUcoFpnp2vu5XJl2E5I/quIyVxUXi6O6c
+# /obspcvace4wy8uO0bdVhc4nJ+Rla4InVSJaUaBeiHTW8kReSFYyMmDCzLjGIu1q
+# doU61OM3Zv1ptsLu3gUE6GU27iWYj2RWN3e3HE4Sbd89IFwLXNdSuM0ifDLZk7AQ
+# WBhRhipCCgZhkj9g2NEk7jRVslti1NdN5zoQLaJNqSwO1MtxTmJ15Ksk3QP6kfLB
+## Q52UWybBzpaP9HEd4XnR+HuQ4k2K0ns2KgNImsNvIyFwbpMUyUWLMPimaV1DWUXo
+# 5SBjDB/V/W2JBFR+XKHFJeFwYhj7DD/ocsGr4ZMx/lgc8rjIBkI=
+# =lgTX
+# -----END PGP SIGNATURE-----
+#
+#Create first draft
+
+# kvlm = Key-Value List with Message.
+# 
+def kvlm_parse(message, start=0, dct=None):
+    if not dct:
+        dct = dict()
+
+    # Search for next space and next line
+    next_space = message.find(b' ', start)
+    next_line = message.find(b'\n', start)
+
+    # Base case
+    # =========
+    # If newline appears first, assume blank line. Blank line == message coming next and nothing else after that
+    # If there's no space at all, returns also -1
+    #
+    # Store message in the dictionary, with None as the key, and return. 
+    if (next_space < 0) or (next_line < next_space):
+        assert next_line == start
+        dct[None] = message[start+1:]
+        return dct
+
+    # Recursive case
+    # ==============
+    # Read key. Save it for next iteration 
+    # Example:
+    # Read from the beginning of the message until the first space: first iteration = "tree"
+    key = message[start:next_space]
+
+    # end = 0
+    # First iteration, end == tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147 <--- Here
+    # If next character is ' ', continue
+    # Basically the loop continues until a "\n" followed by a space is found
+    end = start
+    while True:
+        end = message.find(b'\n', end+1)
+        if message[end+1] != ord(' '): break
+
+    # Grab the value. Also drop the leading space on continuation lines
+    # Example
+    # First iteration: tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147 
+    #                       ^                                       ^
+    #                       |                                       |
+    #                       |                                       |
+    #                   From here                                 To here
+    value = message[next_space+1:end].replace(b'\n ', b'\n')
+
+    # Don't overwrite existing data contents
+    # If collision:
+    # - If type is list, append the value
+    # - If type is not list, convert to a list
+    if key in dct:
+        if type(dct[key]) == list:
+            dct[key].append(value)
+        else:
+            dct[key] = [ dct[key], value ]
+    else:
+        dct[key] = value
+
+    # Call recursive
+    # end + 1 = start of next key
+    return kvlm_parse(message, start=end+1, dct=dct)
