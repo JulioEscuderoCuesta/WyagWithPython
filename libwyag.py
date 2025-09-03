@@ -290,7 +290,7 @@ class GitBlob(GitObject):
 
 
 # cat-file command. Prints the raw contents of an object to stdout
-# Structure: wyag cat-file TYPE OBJECT
+# Syntax: wyag cat-file TYPE OBJECT
 argsp = argsubparsers.add_parser("cat-file", help="Provide content of repository objects")
 
 argsp.add_argument("type",
@@ -316,3 +316,48 @@ def cat_file(repo, obj, fmt=None):
 # This function will be the name resolution function. It will be implemented later
 def object_find(repo, name, fmt=None, follow=True):
     return name
+
+
+# hash-object command. Reads a file and computes its hash as and object
+# If -w flag is passed, stores it in the repository. Just prints its hash otherwise
+# Syntax: wyag hash-object [-w] [-t TYPE] FILE
+argsp = argsubparsers.add_parser("hash-object", help="Compute object ID and optionially creates a blob from a file")
+
+argsp.add_argument("-w",
+                    dest="write",
+                    action="store_true",
+                    help="Actually write the object into the database")
+
+argsp.add_argument("-t",
+                    metavar="type",
+                    dest="type",
+                    choices=["blob", "commit", "tag", "tree"],
+                    deafult="blob",
+                    help="Specify the type")
+
+argsp.add_argument("path",
+                    help="Read object from <file>")
+
+# If -w flag is passed, get repo
+def cmd_hash_object(args):
+    if args.write:
+        repo = repo_find()
+    else:
+        repo = None
+
+    with open(args.path, "rb") as fd:
+        sha = object_hash(fd, args.type.encode(), repo)
+        print(sha)
+
+# Reads data type, creates git object, writes git object (either stores it or just prints its sha)
+def object_hash(fd, fmt, repo=None):
+    data = fd.read()
+
+    match fmt:
+        case b'commit' : obj=GitCommit(data)
+        case b'tree'   : obj=GitTree(data)
+        case b'tag'    : obj=GitTag(data)
+        case b'blob'   : obj=GitBlob(data)
+        case _: raise Exception(f"Unknown type {fmt}!")
+
+    return object_write(obj, repo)
