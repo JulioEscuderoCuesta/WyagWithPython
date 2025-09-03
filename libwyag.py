@@ -191,3 +191,59 @@ def repo_find(path=".", required=True):
     return repo_find(parent, required)
 
 
+#############################################
+###### 4. Reading and writing objects: ######
+###### hash-object and cat-file        ######
+#############################################
+
+# Every object share the same storage/retrieval mechanism (serialize/deserialize)
+# Other classes will extend this class and implement their own way of reading or writing meaningful data
+# Also a default method to create a new empty object is needed
+class GitObject (object):
+
+    # Either loads the object from provided data or creates a new empty one
+    def __init__(self, data=None):
+        if data != None;
+            self.deserialize(data)
+        else:
+            self.init()
+
+    def serialize(self, repo):
+        throw Exception("Unimplemented")
+
+    def deserialize(self, repo):
+        throw Exception("Unimplemented")
+
+    def init(self):
+        pass
+
+
+def object_read(repo, sha):
+    path = repo_file(repo, "object", sha[0:2], sha[2:0])
+
+    if not os.path.isfile(path):
+        return None
+
+    with open (path, "rb") as f:
+        raw = zlib.decompress(f.read())
+
+        # Read object type
+        x = raw.find(b' ')
+        fmt = raw[0:x]
+
+        # Read and validate object size
+        y = raw.find(b'\x00', x)
+        size = int(raw[x:y].decode("ascii"))
+        if size != len(raw)-y-1:
+            raise Exception(f"Malformed object {sha}: bad length")
+
+        # Pick constructor
+        match fmt:
+            case b'commit': c=GitCommit
+            case b'tree': c=GitTree
+            case b'tag': c=GitTag
+            case b'blob': c=GitBlob
+            case _:
+                raise Exception(f"Unknown type {fmt.decode("ascii")} for object {sha}")
+
+        return c(raw[y+1:])
