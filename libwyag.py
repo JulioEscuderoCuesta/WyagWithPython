@@ -185,7 +185,7 @@ def repo_find(path=".", required=True):
     if parent == path:
         if required:
             raise Exception("No git directory.")
-        else
+        else:
             return None
 
     return repo_find(parent, required)
@@ -203,7 +203,7 @@ class GitObject (object):
 
     # Either loads the object from provided data or creates a new empty one
     def __init__(self, data=None):
-        if data != None;
+        if data != None:
             self.deserialize(data)
         else:
             self.init()
@@ -283,7 +283,7 @@ class GitBlob(GitObject):
     fmt = b'blob'
 
     def serialize(self):
-        return self.blobdata:
+        return self.blobdata
 
     def deserialize(self, data):
         self.blobdata = data
@@ -332,7 +332,7 @@ argsp.add_argument("-t",
                     metavar="type",
                     dest="type",
                     choices=["blob", "commit", "tag", "tree"],
-                    deafult="blob",
+                    default="blob",
                     help="Specify the type")
 
 argsp.add_argument("path",
