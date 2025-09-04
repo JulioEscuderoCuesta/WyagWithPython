@@ -453,3 +453,17 @@ def kvlm_parse(message, start=0, dct=None):
     # Call recursive
     # end + 1 = start of next key
     return kvlm_parse(message, start=end+1, dct=dct)
+
+
+# Once parser is coded, GitCommit object can be created
+class GitCommit(GitObject):
+    fmt=b'commit'
+
+    def deserialize(self, data):
+        self.kvlm=kvlm_parse(data)
+
+    def serialize(self):
+        return kvlm_serialize(self.kvlm)
+
+    def init(self):
+        self.kvlm = dict()
