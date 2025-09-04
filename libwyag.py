@@ -454,6 +454,31 @@ def kvlm_parse(message, start=0, dct=None):
     # end + 1 = start of next key
     return kvlm_parse(message, start=end+1, dct=dct)
 
+# Write git commit object
+# Write all fields first, then new line, then message, then final line
+def kvlm_serialize(kvlm):
+    # Git saves everything in bytes. SHA-1 works with bytes. b'' makes ret a bytes literal
+    ret = b''
+
+    # Iterate through all keys
+    for k in kvlm.keys():
+        if k == None: 
+            continue:
+        # Transform key to a list to iterate
+        val = kvlm[k]
+        if type(val) != list:
+            val = [ val ]
+
+        # For every key, return string should be:
+        # key + space + value + space + \n. It should always be a space before \n
+        for v in val:
+            ret += k + b' ' + (v.replace(b'\n', b'\n ')) + b'\n'
+
+    # After all the keys, it comes the message in a new line
+    ret += b'\n' + kvlm[None]
+
+    return ret
+
 
 # GitCommit object
 class GitCommit(GitObject):
@@ -481,13 +506,14 @@ def cmd_log(args):
 
     print("digraph wyaglog{")
     print(" node[shape=rect]")
-    log_graphviz(repo, object_find(repo, args.commit), set())
+    log_graphviz(repo, object_find(repo, args.commit), set()) # set = values with no specific order and no duplicates
     print("}")
 
 def log_graphviz(repo, sha, seen):
+    # If commit is already in "seen" (set), already processed. Returns
     if sha in seen:
         return
-    seen.add(sha)
+    seen.add(sha) # Add commit to set otherwise
 
     # Get commit message
     commit = object_read(repo, sha)
@@ -495,23 +521,31 @@ def log_graphviz(repo, sha, seen):
     message = message.replace("\\", "\\\\")
     message = message.replace("\"", "\\\"")
 
-    # If message has more than 1 line, keep only the first
+    # If message has more than 1 line, keep only the first (Don't overload log)
     if "\n" in message:
         message = message[:message.index("\n")]
 
+    # Print first part: current commit plus label (same as git). 
+    # Example:  
+    # c_a05b9176bca8ddc1ee697d3bffa18edcce289cbc [label="a05b917: Section 5 started (previous one). GitCommit object created. kvlm_serialize needs to be implemented"]
     print(f" c_{sha} [label=\"{sha[0:7]}: {message}\"]")
-    # Make sure object is a commit
+
+    # Make sure object is a commit. If other object, it should not have kvlm param, so kvlm_parse() would fail
     assert commit.fmt==b'commit'
 
     # If commit has no parent, it is the initial commit. Return
     if not b'parent' in commit.kvlm.keys():
         return
 
+    # Af parsing with kvlm_parse(), get parents commits (probably a list)
     parents = commit.kvlm[b'parent']
 
+    # If parents is no list, make it a list
     if type(parents) != list:
         parents = [ parents ]
 
+    # Print second part: current commit plus parent commit
+    # Call recursive with parent commit
     for p in parents:
         p = p.decode("ascii")
         print(f" c_{sha} -> c_{p};")
