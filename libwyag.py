@@ -715,6 +715,10 @@ def ls_tree(repo, ref, recursive=None, prefix=""):
 
     obj = object_read(repo, sha)
 
+    # obj should be a git tree
+    if (obj.fmt != b'tree'):
+        raise Exception(f"Object {sha} is not a tree (it's {obj.fmt.decode('ascii')})")
+
     # obj.items = [
     # GitTreeLeaf(mode=b'100644', path='README.md', sha='def456...'),
     # GitTreeLeaf(mode=b'100644', path='main.py', sha='789abc...'),
