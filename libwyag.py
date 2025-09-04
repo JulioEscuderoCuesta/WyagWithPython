@@ -221,15 +221,28 @@ class GitObject (object):
 # An object starts with a header that specifies its type: blob, commit, tag or tree (more on that in a second). 
 # This header is followed by an ASCII space (0x20), then the size of the object in bytes as an ASCII number, 
 # then null (0x00) (the null byte), then the contents of the object.
+
+# Input: repo + SHA string
+# Output: Python object (GitTree, GitCommit, GitBlob...)
+# Example
+# Input: object_read(repo, "abc123")
+# Output: GitCommit(b'tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent 206941306e8a8af65b66eaaaea388a7ae24d49a0\nauthor...\n\nCreate first draft')
 def object_read(repo, sha):
-    path = repo_file(repo, "objects", sha[0:2], sha[2:])
+    path = repo_file(repo, "objects", sha[0:2], sha[2:]) # path = ".git/objects/ab/c123"
 
     if not os.path.isfile(path):
         return None
 
     with open (path, "rb") as f:
         # Decompresse object
+        # Example: raw = b'tree 95\x00100644 README.md\x00\xde\xf4V...[20 bytes]100644 main.py\x00\x78\x9a\xbc...[20 bytes]40000 src\x00\x11\x12"...[20 bytes]'
         raw = zlib.decompress(f.read())
+
+        # Now there is something like:
+        # b'commit 1086\x00tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent 
+        # 206941306e8a8af65b66eaaaea388a7ae24d49a0
+        # \nauthor Thibault Polge <thibault@thb.lt> 
+        # 1527025023 +0200\n\nCreate first draft'
 
         # Find first space to get object type
         x = raw.find(b' ') # Example: x = 6 (position of space)
@@ -253,7 +266,9 @@ def object_read(repo, sha):
                 raise Exception(f"Unknown type {fmt.decode("ascii")} for object {sha}")
 
         # Return class with content
-        return c(raw[y+1:]) # Example: c=GitCommit. return GitCommit(raw[12:end]), only the content of the object
+        # Example: c=GitCommit. return GitCommit(raw[12:end]), only the content of the object
+        # GitCommit(b'tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent 206941306e8a8af65b66eaaaea388a7ae24d49a0\nauthor...\n\nCreate first draft'))
+        return c(raw[y+1:]) 
 
 # Writing Wyag object
 def object_write(obj, repo=None):
@@ -463,7 +478,7 @@ def kvlm_serialize(kvlm):
     # Iterate through all keys
     for k in kvlm.keys():
         if k == None: 
-            continue:
+            continue
         # Transform key to a list to iterate
         val = kvlm[k]
         if type(val) != list:
@@ -572,9 +587,9 @@ def log_graphviz(repo, sha, seen):
 # - Followed by the null-terminated (0x00) path;
 # - Followed by the object’s SHA-1 in binary encoding, on 20 bytes.
 # 
-# Mode                  SHA-1                           Path
-# 100644  894a44cc066a027465cd26d634948d56d13af9af    .gitignore
-# 100644  6d208e47659a2a10f5f8640e0155d9276a2130a9    src
+# Mode        Path                    SHA-1                           
+# 100644  .gitignore  894a44cc066a027465cd26d634948d56d13af9af
+# 100644      src     6d208e47659a2a10f5f8640e0155d9276a2130a9 
 
 # A leaf is a single path in a tree
 class GitTreeLeaf(object):
@@ -601,6 +616,190 @@ def tree_parse_one(raw, start=0):
     # Read the SHA
     raw_sha = int.from_bytes(raw[y+1:y+21], "big")
     # Convert it into an hex string, padded to 40 chars with zeeros if needed
+    # Adds 0's to the left until 40 chars are reached. SHA-1 are always 40 char long
     sha = format(raw_sha, "040x")
     # Returns end of tuple position and data
     return y+21, GitTreeLeaf(mode, path.decode("utf8"), sha)
+
+
+# Real parser. Call parse_one i a loop until all tuples are processed
+def tree_parse(raw):
+    pos = 0
+    max = len(raw)
+    ret = list()
+    while pos < max:
+        pos, data = tree_parse_one(raw, pos)
+        ret.append(data)
+
+    return ret
+
+
+# Now comes the serializer to write trees back
+# Git needs CONSISTENT SORTING, so the same content outputs the same SHA-1
+
+
+# Define sorting rules. 
+# Files are sorted using their exact name.
+# Directories are sorted as if they had / at the end
+def tree_leaf_sort_key(leaf):
+    if leaf.mode.startswith(b"10"):
+        return leaf.path
+    else:
+        return leaf.path + "/"
+
+
+# Sort items using tree_leaf_sort_key function as a transformer, then write them in order
+def tree_serialize(obj):
+    obj.items.sort(key=tree_leaf_sort_key)
+    ret = b''
+    # Creates and returns tuple. mode + ' ' + path encoded + null (\x00) + sha to bytes (20)
+    for i in obj.items:
+        ret += i.mode
+        ret += b' '
+        ret += i.path.encode("utf8")
+        ret += b'\x00'
+        sha += int(i.sha, 16)
+        ret += sha.to_bytes(20, byteorder="big")
+    return ret
+
+# GitTree class
+class GitTree(GitObject):
+    fmt=b'tree'
+
+    def deserialize(self, data):
+        self.items = tree_parse(data)
+
+    def serialize(self):
+        return tree_serialize(self)
+
+    def init(self):
+        self.items = list()
+
+
+
+# ls-tree command
+# Sytanx:
+# git ls-tree [-r] TREE. Prints content of a tree, recursively with -r flag (only final objects with their full path)
+# Example:
+# wyag ls-tree abc123
+# - 100644 blob file1.txt    file1.txt
+#   040000 tree src          src
+#   100644 blob README.md    README.md
+#
+# wyag ls-tree -r abc123
+# - 100644 blob file1.txt         file1.txt
+#   100644 blob README.md         README.md  
+#   100644 blob main.py           src/main.py
+#   040000 tree utils             src/utils
+#   100644 blob helper.py         src/utils/helper.py
+
+
+argsp = argsubparsers.add_parser("ls-tree", help="Pretty-print a tree object")
+argsp.add_argument("-r",
+                    dest="recursive",
+                    action="store_true",
+                    help="Recurse into sub-trees")
+
+argsp.add_argument("tree",
+                    help="A tree-ish object.")
+
+def cmd_ls_tree(args):
+    # Returns git repo
+    repo = repo_find()
+    # Calls real function with arguments
+    ls_tree(repo, args.tree, args.recursive)
+
+def ls_tree(repo, ref, recursive=None, prefix=""):
+    # Gets object sha
+    sha = object_find(repo, ref, fmt=b"tree") # sha = "abc123"
+
+    obj = object_read(repo, sha)
+
+    # obj.items = [
+    # GitTreeLeaf(mode=b'100644', path='README.md', sha='def456...'),
+    # GitTreeLeaf(mode=b'100644', path='main.py', sha='789abc...'),
+    # GitTreeLeaf(mode=b'40000', path='src', sha='111222...')]
+    for item in obj.items:
+        # item.mode = b'40000'. len = 5. Then type = b'10' = blob
+        if len(item.mode) == 5:
+            type = item.mode[0:1]
+        # item.mode = b'100644'. len = 6. Then type = b'4' = tree
+        else:
+            type = item.mode[0:2]
+
+        match type: 
+            case b'04': type = "tree"
+            case b'10': type = "blob" # A regular file.
+            case b'12': type = "blob" # A symlink. Blob contents is link target.
+            case b'16': type = "commit" # A submodule
+            case _: raise Exception(f"Weird tree leaf mode {item.mode}")
+
+        # If not recursive or not a tree, it's a leaf, print
+        if not (recursive and type=='tree'):
+            print(f"{'0' * (6 - len(item.mode)) + item.mode.decode("ascii")} {type} {item.sha}\t{os.path.join(prefix, item.path)}")
+        # It's recursive and tree, recursive
+        else:
+            ls_tree(repo, item.sha, recursive, os.path.join(prefix, item.path))
+
+
+# Checkout command
+# Instantiates a commit in the worktree
+#
+# Example
+# wyag checkout abc123 /tmp/my_checkout
+# tree abc123 contains:
+# ├── README.md (blob def456)
+# ├── main.py   (blob 789abc) 
+# └── src/      (tree 111222)
+#     └── utils.py (blob 333444)
+#
+# Input: commit and directory
+# Output: Tree instantiated in a directory in the filesystem
+argsp = argsubparsers.add_parser("checkout", help="Checkout a commit inside of a directory")
+
+argsp.add_argument("commit",
+                    help="The commit or tree to checkout")
+
+argsp.add_argument("path",
+                    help="The EMPTY directory to checkout on.")
+
+def cmd_checkout(args):
+    repo = repo_find()
+
+    obj = object_read(repo, object_find(repo, args.commit)) # Obtains "tree abc123"
+
+    # If object is a commit, get its tree
+    if obj.fmt == b'commit':
+        obj = object_read(repo, obj.kvlm[b'tree'].decode("ascii"))
+
+    # Verify direcotry path exists. 
+    # If it doesn't exist, create one
+    # If path exist but it's not a directory, raise exception
+    # If directory path exists and is not empty, raise Exception
+    if os.path.exists(args.path):
+        if not os.path.isdir(args.path):
+            raise Exception(f"Not a directory {args.path}!")
+        if os.listdir(args.path):
+            raise Exception(f"Not empty {args.path}!")
+    else:
+        os.makedirs(args.path)
+
+    # Calls checkout with only the commit content
+    # obj.items = [README.md, main.py, src/]
+    tree_checkout(repo, obj, os.path.realpath(args.path))
+
+# Creates directory and file structure of a tree object
+#
+# Input: repo, tree object, path to checkout
+# Output: directory structure with all the object from the tree
+def tree_checkout(repo, tree, path):
+    for item in tree.items: 
+        obj = object_read(repo, item.sha) # item.sha = "def456"  or "111222"
+        dest = os.path.join(path, item.path) # /tmp/my_checkout/README.me or /tmp/my_checkout/src <-- this is recursive
+
+        if obj.fmt == b'tree':
+            os.makedirs(dest) # If tree, make directory
+            tree_checkout(repo, obj, dest) # and checkout the rest
+        elif obj.fmt == b'blob':
+            with open(dest, "wb") as f:
+                f.write(obj.blobdata) # If blob, print its data
