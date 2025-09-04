@@ -240,7 +240,7 @@ def object_read(repo, sha):
         size = int(raw[x:y].decode("ascii")) # Example: size = 1086
 
         # Check size is equal
-        if size != len(raw)-y-1: # Example: content_size should be full content minus null byte plus size information
+        if size != len(raw)-y-1: # Example: content_size should be full content minus (null byte plus size information)
             raise Exception(f"Malformed object {sha}: bad length")
 
         # Pick constructor
@@ -455,7 +455,7 @@ def kvlm_parse(message, start=0, dct=None):
     return kvlm_parse(message, start=end+1, dct=dct)
 
 
-# Once parser is coded, GitCommit object can be created
+# GitCommit object
 class GitCommit(GitObject):
     fmt=b'commit'
 
@@ -467,3 +467,52 @@ class GitCommit(GitObject):
 
     def init(self):
         self.kvlm = dict()
+
+
+# log command
+argsp = argsubparsers.add_parser("log", help="Display history of a give commit.")
+argsp.add_argument("commit",
+                    default="HEAD",
+                    nargs="?",
+                    help="Commit to start at.")
+
+def cmd_log(args):
+    repo = repo_find()
+
+    print("digraph wyaglog{")
+    print(" node[shape=rect]")
+    log_graphviz(repo, object_find(repo, args.commit), set())
+    print("}")
+
+def log_graphviz(repo, sha, seen):
+    if sha in seen:
+        return
+    seen.add(sha)
+
+    # Get commit message
+    commit = object_read(repo, sha)
+    message = commit.kvlm[None].decode("utf8").strip()
+    message = message.replace("\\", "\\\\")
+    message = message.replace("\"", "\\\"")
+
+    # If message has more than 1 line, keep only the first
+    if "\n" in message:
+        message = message[:message.index("\n")]
+
+    print(f" c_{sha} [label=\"{sha[0:7]}: {message}\"]")
+    # Make sure object is a commit
+    assert commit.fmt==b'commit'
+
+    # If commit has no parent, it is the initial commit. Return
+    if not b'parent' in commit.kvlm.keys():
+        return
+
+    parents = commit.kvlm[b'parent']
+
+    if type(parents) != list:
+        parents = [ parents ]
+
+    for p in parents:
+        p = p.decode("ascii")
+        print(f" c_{sha} -> c_{p};")
+        log_graphviz(repo, p, seen)
