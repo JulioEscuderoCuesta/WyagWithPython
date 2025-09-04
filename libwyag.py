@@ -550,3 +550,57 @@ def log_graphviz(repo, sha, seen):
         p = p.decode("ascii")
         print(f" c_{sha} -> c_{p};")
         log_graphviz(repo, p, seen)
+
+
+
+#############################################
+##### 6. Reading commit data: checkout ######
+#############################################
+
+# A tree is an array of three-elements tuples
+# File mode - SHA-1 - path (relative to the worktree)
+# If SHA-1 == blob, path is a file
+# If SHA-1 == tree, path is a directory
+# 
+# Tree are bynary objects. 
+# Its format is:
+# [mode] space [path] 0x00 [sha-1]
+# - [mode] is up to six bytes and is an octal representation of a file mode, stored in ASCII. 
+#   For example, 100644 is encoded with byte values 49 (ASCII “1”), 48 (ASCII “0”), 48, 54, 52, 52. 
+#   The first two digits encode the file type (file, directory, symlink or submodule), the last four the permissions.
+# - It’s followed by 0x20, an ASCII space;
+# - Followed by the null-terminated (0x00) path;
+# - Followed by the object’s SHA-1 in binary encoding, on 20 bytes.
+# 
+# Mode                  SHA-1                           Path
+# 100644  894a44cc066a027465cd26d634948d56d13af9af    .gitignore
+# 100644  6d208e47659a2a10f5f8640e0155d9276a2130a9    src
+
+# A leaf is a single path in a tree
+class GitTreeLeaf(object):
+    def __init__(self, mode, path, sha):
+        self.mode = mode
+        self.path = path
+        self.sha = sha
+
+# Parser to extract a single record
+def tree_parse_one(raw, start=0):
+    x = raw.find(b' ', start)
+    assert x-start == 5 or x-start == 6
+
+    # Read the mode
+    mode = raw[start:x]
+    if len(mode) == 5:
+        mode = b"10" + mode
+
+    # Find NULL terminator
+    y = raw.find(b'\x00', x)
+    # Read the path
+    path = raw[x+1:y]
+
+    # Read the SHA
+    raw_sha = int.from_bytes(raw[y+1:y+21], "big")
+    # Convert it into an hex string, padded to 40 chars with zeeros if needed
+    sha = format(raw_sha, "040x")
+    # Returns end of tuple position and data
+    return y+21, GitTreeLeaf(mode, path.decode("utf8"), sha)
