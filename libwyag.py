@@ -857,7 +857,7 @@ def ref_resolve(repo, ref):
     if data.startswith("ref: "):
         return ref_resolve(repo, data[5:])
     # Here the data is a SHA-1, return it.
-    else
+    else:
         return data
 
 
@@ -1073,3 +1073,28 @@ def object_find(repo, name, fmt=None, follow=True):
             sha = obj.kvlm[b'tree'].decode("ascii")
         else:
             return None
+
+
+## rev-parse command ##
+
+# Solving references
+argsp = argsubparsers.add_parser("rev-parse", help="Parse revision (or other objects) identifiers")
+
+argsp.add_argument("--wyag-type",
+                    metavar="type",
+                    dest="type",
+                    choices=["blob", "commit", "tag", "tree"],
+                    default=None,
+                    help="Specify the expected type")
+
+argsp.add_argument("name",
+                    help="The name to parse")
+
+def cmd_rev_parse(args):
+    if args.type:
+        fmt = args.type.encode()
+    else:
+        fmt = None
+
+    repo = repo_find()
+    print (object_find(repo, args.name, fmt, follow=True))
