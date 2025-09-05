@@ -807,3 +807,182 @@ def tree_checkout(repo, tree, path):
         elif obj.fmt == b'blob':
             with open(dest, "wb") as f:
                 f.write(obj.blobdata) # If blob, print its data
+
+
+
+#############################################
+##### 7. Refs, tags and branches ######
+#############################################
+
+
+# To refer to objects, their name is usually used, not their full hexadecimal identifier.
+# This is handled by a mechanism called references.
+# These live in subdirectories of .git/refs. They are text containing hexadecimal representations of an object's hash.
+#
+# .git/refs/
+# ├── heads/
+# │   ├── main          → points to last commit of main branch
+# │   └── develop       → points to last commit of develop branch
+# ├── remotes/
+# │   └── origin/
+# │       └── main      → points to last commit of origin/main
+# └── tags/
+#     └── v1.0          → points to a specific commit (release)
+#
+# Example: 
+# $ cat .git/refs/heads/main
+# 6071c08bcb4757d8c89a30d9755d2466cef8c1de ---- SHA-1 of commit
+#
+# $ cat .git/HEAD
+# ref: refs/heads/main ---- indirect reference
+# 
+#
+# Takes a ref name, follow eventual recursive references, and returns a SHA-1 identifier 
+#
+# Input: repository and reference to an object
+# Output: the SHA-1 identifier of an object (or a reference to another reference)
+def ref_resolve(repo, ref):
+    # Construct path: .git/refs
+    path = repo_file(repo, ref)
+
+    if not os.path.isfile(path):
+        return None
+
+    # Reads file content and drops final \n. "ref: refs/heads/main"
+    with open(path, 'r') as fp:
+        data = fp.read()[:-1]
+    # If ref points to another ref, return it recursively --> ref_resolve(.git, refs/heads/main)
+    if data.startswith("ref: "):
+        return ref_resolve(repo, data[5:])
+    # Here the data is a SHA-1, return it.
+    else
+        return data
+
+
+# Collects all refs of a nested object and returns them as a dict
+# 
+# Input: repository and path (optional)
+# Output: a string like "refs/remotes/origin/master"
+#
+# ref_list(., None) ===> refs/remote/origin/master --> assuming there's a "refs" directory in the working repo
+def ref_list(repo, path=None):
+    if not path:
+        path = repo_dir(repo, "refs")
+    ret = dict()
+
+    # If path is ".git/refs"
+    for f in sorted(os.listdir(path)):
+        can = os.path.join(path, f) # can = ".git/refs/heads"
+        if os.path.isdir(can):
+            ret[f] = ref_list(repo, can) # It's directory. ret["heads"] = ref_list(repo, ".git/refs/heads")
+        else:
+            ret[f] = ref_resolve(repo, can) # It's a file. ret["main"] = ref_resolve(repo, ".git/refs/heads/main")
+
+    return ret
+
+argsp = argsubparsers.add_parser("show-ref", help="List references.")
+
+
+# Bridge function for the show_ref command
+#
+# Gets the current repo and the collections of refs and calls real worker
+def cmd_show_ref(args):
+    repo = repo_find()
+    refs = ref_list(repo)
+    show_ref(repo , refs, prefix="refs")
+
+# Prints references recursively
+def show_ref(repo , refs, with_hash=True, prefix=""):
+    if prefix:
+        prefix = prefix + '/' # "refs" -> "refs/"
+
+    # k = "heads", v={'main': a1b2c3...', 'develop': 'f4g5h6...'}"
+    for k, v in refs.items():
+        # v is a SHA-1, print
+        if type(v) == str and with_hash:
+            print (f"{v} {prefix}{k}") # "a1b2c3... refs/heads/main"
+        # v is a SHA-1, but no hash
+        elif type(v) == str:
+            print(f"{prefix}{k}") # "refs/heads/main"
+        # v is a directory
+        # show_ref(repo, {'main': 'a1b2c3...', 'develop': 'f4g5h6...'}, prefix="refs/heads")
+        else:
+            show_ref(repo, v, with_hash=with_hash, prefix=f"{prefix}{k}")
+
+
+
+## Tag Command ##
+#
+# In git:
+# git tag                  # List all tags
+# git tag NAME [OBJECT]    # create a new *lightweight* tag NAME, pointing
+#                          # at HEAD (default) or OBJECT
+# git tag -a NAME [OBJECT] # create a new tag *object* NAME, pointing at
+#                          # HEAD (default) or OBJECT
+#
+#
+class GitTag(GitCommit):
+    fmt = b'tag'
+
+argsp = argsubparsers.add_parser("tag", help="List and create tags")
+
+argsp.add_argument("-a", 
+                    action="store_true",
+                    dest="create_tag_object",
+                    help="Wheter to create a tag object")
+
+argsp.add_argument("name",
+                    nargs="?",
+                    help="The new tag's name")
+
+args.add_argument("object",
+                    default="HEAD",
+                    nargs="?",
+                    help="The object the new tag will point to")
+
+# Bridge function for tags.
+# List or create tags depending on whether or not argument "name" is provided
+def cmd_tag(args):
+    repo = repo_fid()
+
+    if args.name:
+        tag_create(repo, args.name, args.object, create_tag_object = args.create_tag_object)
+    else:
+        refs = ref_list(repo)
+        # Just show the ".git/heads/tags" content
+        show_ref(repo, refs["tags"], with_hash=False)
+
+def tag_create(repo, name, ref, create_tag_object=False):
+    # Get GitObject from object's reference
+    sha = object_find(repo, ref)
+
+    if create_tag_object:
+        tag = GitTag()
+        tag.kvlm = dict()
+        tag.kvlm[b'object'] = sha.encode()
+        tag.kvlm[b'type'] = b'commit'
+        tag.kvlm[b'tag'] = name.encode()
+
+        tag.kvlm[b'tagger'] = b'Wyag escuderocuestajulio@gmail.com'
+        tag.kvlm[None] = b"A tag generated by wyag, which won't let you customize the message!\n"
+        tag_sha = object_write(tag, repo)
+        # Create the tag reference
+        ref_create(repo, "tags/" + name, tag_sha)
+    else:
+        # Create lightweigth tag
+        ref_create(repo, "tags/" + name, sha)
+
+def ref_create(repo, ref_name, sha):
+    with open(repo_file(repo, "refs/", + ref_name), 'w') as fp:
+        fp.write(sha + "\n")
+
+
+## Branches ##
+#
+# Branches are references to commits (tags can refer to any object)
+# They live under ".git/refs/heads"
+# The branch ref is updated at each commit:
+#
+# 1. A new commit object is created, with the current branch’s (commit!) ID as its parent;
+# 2. The commit object is hashed and stored;
+# 3. The branch ref is updated to refer to the new commit’s hash.
