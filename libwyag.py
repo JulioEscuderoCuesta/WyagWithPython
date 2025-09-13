@@ -230,8 +230,9 @@ class GitObject (object):
 def object_read(repo, sha):
     path = repo_file(repo, "objects", sha[0:2], sha[2:]) # path = ".git/objects/ab/c123"
 
-    if not os.path.isfile(path):
-        return None
+    if path is None or not os.path.isfile(path):
+        print(f"WARNING: Object {sha} not found in repository")
+        return None 
 
     with open (path, "rb") as f:
         # Decompresse object
@@ -1192,7 +1193,7 @@ def index_read(repo):
         # Same for modification time
         mtime_s = int.from_bytes(content[idx+8: idx+12], "big")
         # The extra nanoseconds
-        mtime_ns = int.from_bytes(content[idx+12: idx+16:], "big")
+        mtime_ns = int.from_bytes(content[idx+12: idx+16], "big")
         # Device ID
         dev = int.from_bytes(content[idx+16: idx+20], "big")
         # Inode
@@ -1260,7 +1261,7 @@ def index_read(repo):
     return GitIndex(version=version, entries=entries)
 
 
-## Ls-files command
+## Ls-files command ##
 
 # Displays the names of files in the staging area, with options.
 
@@ -1285,3 +1286,153 @@ def cmd_ls_files(args):
             print(f"  created: {datetime.fromtimestamp(e.ctime[0])}.{e.ctime[1]}, modified: {datetime.fromtimestamp(e.mtime[0])}.{e.mtime[1]}")
             print(f"  device: {e.dev}, inode: {e.ino}")
             print(f"  flags: stage={e.flag_stage} assume_valid={e.flag_assume_valid}")
+
+
+## Check-ignore command ##
+
+# Add support for ignoring files in wyag. "status" needs to know which ignore rules are defined
+
+argsp = argsubparsers.add_parser("check-ignore", help = "Check path(s) against ignore rules")
+argsp.add_argument("path", nargs="+", help="Path to check")
+
+def cmd_check_ignore(args):
+    repo = repo_find()
+    rules = gitignore_read(repo)
+    for path in args.path:
+        if check_ignore(rules, path):
+            print(path)
+
+# Adding a reader for rules in ignore files.
+# Each line in an ignore file is a exclusion patther: files that match this pattern are ignored by "statu", "add -A"...
+# Special cases:
+#
+# 1. Lines beginning with ! negate the patter
+# 2. Lines beginning with # are comments, and are skipped
+# 3. A \ at the beginning treats ! and # as literal characters
+
+# Parser for a single pattern
+# Returns pattern itself and a flag to indicates if files matching the pattern should or should not be included
+def gitignore_single_parser(raw):
+    raw = raw.strip() # Remove leading/trailing spaces
+
+    if not raw or raw[0] == "#":
+        return None
+    elif raw[0] == "!":
+        return (raw[1:], False)
+    elif raw[0] == "\\":
+        return (raw[1:], True)
+    else:
+        return (raw, True)
+    
+def gitignore_parse(lines):
+    ret = list()
+
+    for line in lines:
+        parsed = gitignore_single_parser(line)
+        if parsed:
+            ret.append(parsed)
+    
+    return ret
+
+# Collect the ignore files. The are of two kinds:
+#
+# 1. .gitignore files. They live in the index. 
+#     There can be more than one in each directory of a wyag proyect and their rules apply to that directory
+# 2. global ignore files (~/.config/git/ignore). They live outside the index
+#    They apply everywhere, but have lower priority
+
+# Git class to hold:
+#
+# 1. list of absolute rules
+# 2. dict of relative (scoped) rules
+class GitIgnore(object):
+    absolute = None
+    scoped = None
+
+    def __init__(self, absolute, scoped):
+        self.absolute = absolute
+        self.scoped = scoped
+
+# Function to collect all gitignore rules in the repository and return a GitIgnore object.
+#
+# Read object from the index, not they worktree: only staged .gitignore files matter
+def gitignore_read(repo):
+    ret = GitIgnore(absolute=list(), scoped=dict())
+
+    repo_file = os.path.join(repo.gitdir, "info/exclude")
+    if os.path.exists(repo_file):
+        with open(repo_file, 'r') as f:
+            ret.absolute.append(gitignore_parse(f.readlines()))
+
+    # Global configuartion
+    if "XDG_CONFIG_HOME" in os.environ:
+        config_home = os.environ["XDG_CONFIG_HOME"]
+    else:
+        config_home = os.path.expanduser("~/.config")
+    
+    global_file = os.path.join(config_home, "git/ignore")
+    if (os.path.exists(global_file)):
+        with open(global_file, "r") as f:
+            ret.absolute.append(gitignore_parse(f.readlines()))
+
+    # .gitignore files in the index
+    index = index_read(repo)
+
+    for entry in index.entries:
+        if entry.name == ".gitignore" or entry.name.endswith("/.gitignore"):
+            dir_name = os.path.dirname(entry.name)
+            contents = object_read(repo, entry.sha)
+            if contents is None:
+                print(f"WARNING: Cannot read .gitignore {entry.name} - object {entry.sha} missing")
+                continue            
+            elif contents:  # Verificar que se leyó correctamente
+                lines = contents.blobdata.decode("utf8").splitlines()
+                ret.scoped[dir_name] = gitignore_parse(lines)
+    return ret
+        
+
+# Function that matches a path against a set of rules
+def match_paths(rules, path):
+    result = None
+    for (pattern, value) in rules:
+        if fnmatch(path, pattern):
+            result = value
+    return result
+
+# Function to match this path against scoped rules, from deepest parent to th farthest.
+#
+# If a rule matches, keep going through the file, because another rule may negate the previous one
+# If one rule matched in a file, drop the remaining files, because a more general file never cancels
+# the effect of a more specific one
+def check_ignore_scoped(rules, path):
+    parent = os.path.dirname(path)
+    while True:
+        if parent in rules:
+            result = match_paths(rules[parent], path)
+            if result != None:
+                return result
+        if parent == "":
+            break
+        parent = os.path.dirname(parent)
+    return None
+
+# Function to match against the list of absolute rules
+#
+# 
+def check_ignore_absolute(rules, path):
+    for ruleset in rules:
+        result = match_paths(ruleset, path)
+        if result != None:
+            return result
+    return False # This is a reasonable default at this point.
+
+# Main function for check ignore files
+def check_ignore(rules, path):
+    if os.path.isabs(path):
+        raise Exception("This function requires a path to be relative to the repository's root")
+    
+    result = check_ignore_scoped(rules.scoped, path)
+    if result != None:
+        return result
+    
+    return check_ignore_absolute(rules.absolute, path)
