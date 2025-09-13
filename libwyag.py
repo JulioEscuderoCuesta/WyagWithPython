@@ -1162,7 +1162,7 @@ class GitIndex(object):
 # Parser to read index files into git index entries.
 #
 # 1. Read the 12-bytes header,
-# 2. Parse entries in order. 
+# 2. Parse entries in order. One entry begins with a set of fixed-length data, followed by a variable-length name
 def index_read(repo):
     index_file = repo_file(repo, "index")
 
@@ -1235,10 +1235,13 @@ def index_read(repo):
             raw_name = content[idx: null_idx]
             idx = null_idx + 1
         
-        name = raw_name.econde("utf8")
+        name = raw_name.decode("utf8")
 
+        # Data is padded on multiples of 8 bytes.
+        # Skip as may bytes as needed for the next read
         idx = 8 * ceil (idx / 8)
 
+        # Add git entry to the list
         entries.append(GitIndexEntry(ctime=(ctime_s, ctime_ns),
             mtime=(mtime_s,  mtime_ns),
             dev=dev,
@@ -1252,5 +1255,33 @@ def index_read(repo):
             flag_assume_valid=flag_assume_valid,
             flag_stage=flag_stage,
             name=name))
-
+    
+    # Return index file with all the entries
     return GitIndex(version=version, entries=entries)
+
+
+## Ls-files command
+
+# Displays the names of files in the staging area, with options.
+
+argsp = argsubparsers.add_parser("ls-files", help = "List all the stage files")
+argsp.add_argument("--verbose", action="store_true", help="Show everything.")
+
+def cmd_ls_files(args):
+    repo = repo_find()
+    index = index_read(repo)
+    if args.verbose:
+        print(f"Index file format v{index.version}, containing {len(index.entries)} entries.")
+
+    for e in index.entries:
+        print(e.name)
+        if args.verbose:
+            entry_type = { 0b1000: "regular file",
+                           0b1010: "symbolic",
+                           0b1110: "git link"}
+            [e.mode_type]
+            print(f"  {entry_type} with perms: {e.mode_perms:o}")
+            print(f"  on blob: {e.sha}")
+            print(f"  created: {datetime.fromtimestamp(e.ctime[0])}.{e.ctime[1]}, modified: {datetime.fromtimestamp(e.mtime[0])}.{e.mtime[1]}")
+            print(f"  device: {e.dev}, inode: {e.ino}")
+            print(f"  flags: stage={e.flag_stage} assume_valid={e.flag_assume_valid}")
