@@ -1436,3 +1436,135 @@ def check_ignore(rules, path):
         return result
     
     return check_ignore_absolute(rules.absolute, path)
+
+
+# Status command ##
+
+argsp = argsubparsers.add_parser("status", help="Show the working tree status")
+
+def cmd_status(_):
+    repo = repo_find()
+    index = index_read(repo)
+
+    cmd_status_branch(repo)
+    cmd_status_head_index(repo, index)
+    print()
+    cmd_status_index_worktree(repo, index)
+
+# See which branch is active right now
+def branch_get_active(repo):
+    # Look at .git/HEAD
+    with open(repo_file(repo, "HEAD"), "r") as f:
+        head = f.read()
+
+    if head.startswith("ref: refs/heads/"):
+        return(head[16:-1])
+    else:
+        return False
+    
+# Print name of active branch, or the hash of the detached HEAD
+def cmd_status_branch(repo):
+    branch = branch_get_active(repo)
+
+    # If branch was found, print its name
+    if branch:
+        print(f"On branch {branch}.")
+    # If not, look for the HEAD object in the git tree
+    else:
+        print(f"HEAD detached at {object_find(repo, 'HEAD')}")
+
+# Difference between staging area and HEAD
+#
+# Read HEAD tree, flatten it in a single hashmap with full paths as keys
+# Compare it to the index and see the difference
+
+# Convert a tree to a flat dict (hashmap)
+def tree_to_dict(repo, ref, prefix=""):
+    ret = dict()
+    tree_sha = object_find(repo, ref, fmt=b"tree")
+    tree = object_read(repo, tree_sha)
+
+    for leaf in tree.items:
+        full_path = os.path.join(prefix, leaf.path)
+        # leaf.mode contains necessary info
+        # 040000 = dict (tree)
+        # 100644, 100755 = file (blob)
+        # 120000 = symlink (blob)
+        # 160000 = commit
+        if leaf.mode == b'40000' or leaf.mode.startswith(b'04'):
+            ret.update(tree_to_dict(repo, leaf.sha, full_path))
+        else:
+            ret[full_path] = leaf.sha
+    return ret
+
+def cmd_status_head_index(repo, index):
+    print("Changes to be commited")
+
+    head = tree_to_dict(repo, "HEAD")
+    for entry in index.entries:
+        # if entry in index is also in HEAD
+        if entry.name in head:
+            # If sha's are different, then the file was modified
+            if head[entry.name] != entry.sha:
+                print(' modified', entry.name)
+            # When key was processed, delete it from the head
+            del head[entry.name]
+        else:
+            # If entry in index is not in head, then file is new
+            print("     added:      ", entry.name)
+    
+    # Keys still in head that have not been deleted are keys not appearing in the index,
+    # so the object was deleted
+    for entry in head.keys():
+        print("     deleted: ", entry)
+
+
+# Changes between index and worktree
+def cmd_status_index_worktree(repo, index):
+    print("Changes not staged for commit:")
+
+    ignore = gitignore_read(repo)
+    gitdir_prefix = repo.gitdir + os.path.sep
+    all_files = list()
+    indexed_files = set(entry.name for entry in index.entries)
+
+    # Walk the filesystem
+    for (root, _, files) in os.walk(repo.worktree, True):
+        if root==repo.gitdir or root.startswith(gitdir_prefix):
+            continue
+        for f in files:
+            full_path = os.path.join(root, f)
+            rel_path = os.path.relpath(full_path, repo.worktree)
+            if rel_path not in indexed_files:
+                all_files.append(rel_path)
+
+    # Walk index. Compare real files with cached versions
+    for entry in index.entries:
+        full_path = os.path.join(repo.worktree, entry.name)
+        if not os.path.exists(full_path):
+            print(" deleted: ", entry.name)
+        else:
+            stat = os.stat(full_path)
+
+            # Compare metadata
+            ctime_ns = entry.ctime[0] * 10**9 + entry.ctime[1]
+            mtime_ns = entry.mtime[0] * 10**9 + entry.mtime[1]
+            if (stat.st_ctime_ns != ctime_ns) or (stat.st_mtime_ns != mtime_ns):
+                # If different, deep compare
+                with open (full_path, "rb") as fd:
+                    new_sha = object_hash(fd, b"blob", None)
+                    # If the hashses are the same, the files are the same
+                    same = entry.sha == new_sha
+
+                    if not same:
+                        print(" modified:", entry.name)
+        
+        if entry.name in all_files:
+            all_files.remove(entry.name)
+    
+    print()
+    print("Untracked files:")
+
+    for f in all_files:
+        if not check_ignore(ignore, f):
+            print(" ", f)
